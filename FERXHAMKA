@@ -318,7 +318,7 @@ local function reportDone()
     -- Cek apakah di sesi ini mendapat Raccoon, Unicorn, atau Butterfly
     local shouldTag = false
     local checkPets = string.lower(pets)
-    if string.find(checkPets, "Owl") or string.find(checkPets, "Bunny") or string.find(checkPets, "Frog") then
+    if string.find(checkPets, "owl") or string.find(checkPets, "bunny") or string.find(checkPets, "frog") then
         shouldTag = true
     end
 
