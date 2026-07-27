@@ -318,7 +318,7 @@ local function reportDone()
     -- Cek apakah di sesi ini mendapat Raccoon, Unicorn, atau Butterfly
     local shouldTag = false
     local checkPets = string.lower(pets)
-    if string.find(checkPets, "Owl") or string.find(checkPets, "Bunny") or string.find(checkPets, "butterfly") then
+    if string.find(checkPets, "Owl") or string.find(checkPets, "Bunny") or string.find(checkPets, "Frog") then
         shouldTag = true
     end
 
@@ -338,8 +338,9 @@ local function reportDone()
 
     -- Tambahkan tag jika pet target ditemukan
     if shouldTag then
-        -- Mention ID Role atau User yang kamu berikan
-        payload.content = "<@&1524802125996232906>" 
+        -- Jika ingin mention via Role ID atau User ID, ubah di sini.
+        -- Contoh: "<@&1234567890>" untuk Role, atau "<@1234567890>" untuk User.
+        payload.content = "<@&1524802125996232906>"
     end
 
     sendWebhook(payload)
