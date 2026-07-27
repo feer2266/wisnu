@@ -340,7 +340,7 @@ local function reportDone()
     if shouldTag then
         -- Jika ingin mention via Role ID atau User ID, ubah di sini.
         -- Contoh: "<@&1234567890>" untuk Role, atau "<@1234567890>" untuk User.
-        payload.content = "@petwebhook"
+        payload.content = "@1524802125996232906"
     end
 
     sendWebhook(payload)
