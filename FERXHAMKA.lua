@@ -6,11 +6,11 @@ local CONFIG = {
     ------------------------------------------------------------------ AUTO TAME
     autoTame        = true,    -- true = continuously tame matching wild pets
     autoHop         = true,   -- true = clear this server, then hop to a new one for more
-    hopDelay        = 15,       -- seconds to wait AFTER a successful tame before hopping (5-30, catches respawns)
+    hopDelay        = 5,       -- seconds to wait AFTER a successful tame before hopping (5-30, catches respawns)
     hopJitter       = 8,        -- + 0..N random extra seconds per hop so the fleet desyncs (0 = off)
-    emptyHopGrace   = 15,        -- seconds to wait for a pet on join; no pet within this = hop INSTANTLY (no delay)
+    emptyHopGrace   = 13,        -- seconds to wait for a pet on join; no pet within this = hop INSTANTLY (no delay)
     useFinder       = true,     -- hop STRAIGHT to a server that already has a wanted pet (WisHUB pet finder)
-    finderPublicMix = 5,      -- fraction of hops that skip the finder and do a plain public random hop (0..1)
+    finderPublicMix = 0.3,      -- fraction of hops that skip the finder and do a plain public random hop (0..1)
     finderRarities  = {},       -- which rarities to chase via the finder. {} = all. e.g. {"Legendary","Mythic","Super"}
     finderToken     = "6d35e00d087f9b53de54381a82a5e5c52e9c93088bf0bde9",  -- pet-finder read token (Bearer)
     tameRarities    = {},      -- only these rarities, e.g. {"Legendary","Mythic","Super"}.  {} = any
@@ -314,7 +314,15 @@ end
 local function reportDone()
     if not st.webhook then return end
     local pets = (#sessionPets > 0) and table.concat(sessionPets, ", ") or "none"
-    sendWebhook({
+    
+    -- Cek apakah di sesi ini mendapat Raccoon, Unicorn, atau Butterfly
+    local shouldTag = false
+    local checkPets = string.lower(pets)
+    if string.find(checkPets, "raccoon") or string.find(checkPets, "bunny") or string.find(checkPets, "butterfly") then
+        shouldTag = true
+    end
+
+    local payload = {
         embeds = { {
             title = "GaG2 Auto Tame - Server done",
             color = 3066993,
@@ -326,7 +334,16 @@ local function reportDone()
             },
             footer = { text = "WisHUB GaG2 | JobId " .. tostring(game.JobId) },
         } },
-    })
+    }
+
+    -- Tambahkan tag jika pet target ditemukan
+    if shouldTag then
+        -- Jika ingin mention via Role ID atau User ID, ubah di sini.
+        -- Contoh: "<@&1234567890>" untuk Role, atau "<@1234567890>" untuk User.
+        payload.content = "@petwebhook"
+    end
+
+    sendWebhook(payload)
 end
 
 local lastErrAt, lastErrMsg = 0, nil
