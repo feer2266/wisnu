@@ -6,15 +6,25 @@ local CONFIG = {
     ------------------------------------------------------------------ AUTO TAME
     autoTame        = true,    -- true = continuously tame matching wild pets
     autoHop         = true,   -- true = clear this server, then hop to a new one for more
-    hopDelay        = 5,       -- seconds to wait AFTER a successful tame before hopping (5-30, catches respawns)
-    hopJitter       = 8,        -- + 0..N random extra seconds per hop so the fleet desyncs (0 = off)
-    emptyHopGrace   = 13,        -- seconds to wait for a pet on join; no pet within this = hop INSTANTLY (no delay)
+    
+    -- PERUBAHAN: hopDelay diubah jadi 0 dan Jitter 0 agar langsung pindah server setelah dapat pet
+    hopDelay        = 0,       
+    hopJitter       = 0,       
+    
+    -- PERUBAHAN: emptyHopGrace diubah jadi 1 detik. Jika kosong, langsung lompat!
+    emptyHopGrace   = 1,       
+    
     useFinder       = true,     -- hop STRAIGHT to a server that already has a wanted pet (WisHUB pet finder)
     finderPublicMix = 0.3,      -- fraction of hops that skip the finder and do a plain public random hop (0..1)
-    finderRarities  = {},       -- which rarities to chase via the finder. {} = all. e.g. {"Legendary","Mythic","Super"}
+    
+    -- PERUBAHAN: Menargetkan SEMUA rarity
+    finderRarities  = { "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic", "Super" },       
     finderToken     = "6d35e00d087f9b53de54381a82a5e5c52e9c93088bf0bde9",  -- pet-finder read token (Bearer)
-    tameRarities    = {},      -- only these rarities, e.g. {"Legendary","Mythic","Super"}.  {} = any
-    tameNames       = {},      -- only these species, e.g. {"Raccoon","Dragonfly"}.          {} = any
+    
+    -- PERUBAHAN: Menangkap SEMUA rarity
+    tameRarities    = { "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic", "Super" },      
+    tameNames       = {},      -- Kosongkan agar semua spesies pet ditangkap
+    
     tameMoveSpeed   = 60,      -- how fast you walk to each pet (16 = normal ... 50 = max)
     tameReturnAfter = true,    -- (no effect while protectWildTame is false)
     maxPetPrice     = 20000000,       -- skip pets costing more than this (0 = no limit). Number, e.g. 15e6
@@ -36,8 +46,8 @@ local CONFIG = {
     ------------------------------------------------------------------ MISC
     antiFling   = true,    -- cancel fling/knockback velocity each frame (collision stays ON, unlike noclip)
     autoRejoin  = true,    -- rejoin a fresh server if Roblox disconnects/kicks you (Error 279, garden-load kick, etc.)
-    charLoadTimeout = 30,  -- avatar never appears (no char/analog stick)? rejoin after this many seconds (0 = off)
-    rejoinOnError   = 15,    -- after this many back-to-back tame-loop errors, instant-rejoin to unstick (0 = off)
+    charLoadTimeout = 15,  -- avatar never appears (no char/analog stick)? rejoin after this many seconds (0 = off)
+    rejoinOnError   = 2,    -- after this many back-to-back tame-loop errors, instant-rejoin to unstick (0 = off)
     skipLoading = true,    -- auto-skip the loading screen once it is fully loaded
     fpsBoost    = true,    -- strip the world for max FPS (everything returns on rejoin)
 
@@ -95,7 +105,7 @@ do
         end
 
         for _ = 1, 8 do
-            rejoinFailed = true
+            rejoinFailed = false
             pcall(function() TeleportService:Teleport(rejoinPlaceId, LocalPlayer) end)
 
             local t0 = os.clock()
@@ -338,8 +348,6 @@ local function reportDone()
 
     -- Tambahkan tag jika pet target ditemukan
     if shouldTag then
-        -- Jika ingin mention via Role ID atau User ID, ubah di sini.
-        -- Contoh: "<@&1234567890>" untuk Role, atau "<@1234567890>" untuk User.
         payload.content = "<@&1524802125996232906>"
     end
 
@@ -1057,7 +1065,8 @@ task.spawn(function()
 
                         if sessionTamed > 0 then
                             reportDone()
-                            local hd = math.clamp(tonumber(st.hopDelay) or 5, 5, 30)
+                            -- PERBAIKAN: Mengizinkan hop delay menjadi 0 (sebelumnya terkunci minimal 5 detik)
+                            local hd = math.max(0, tonumber(st.hopDelay) or 0)
                             local jitter = math.max(0, tonumber(st.hopJitter) or 0)
                             if jitter > 0 then hd = hd + math.random() * jitter end
                             notify(("Tamed %d, hopping in %.0fs"):format(sessionTamed, hd))
