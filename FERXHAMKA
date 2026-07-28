@@ -6,26 +6,22 @@ local CONFIG = {
     ------------------------------------------------------------------ AUTO TAME
     autoTame        = true,    -- true = continuously tame matching wild pets
     autoHop         = true,   -- true = clear this server, then hop to a new one for more
-    
-    -- PERUBAHAN: hopDelay diubah jadi 0 dan Jitter 0 agar langsung pindah server setelah dapat pet
-    hopDelay        = 0,       
-    hopJitter       = 0,       
-    
-    -- PERUBAHAN: emptyHopGrace diubah jadi 1 detik. Jika kosong, langsung lompat!
-    emptyHopGrace   = 1,       
-    
+    hopDelay        = 5,       -- seconds to keep watching for respawns after a tame before hopping (5-30)
+    hopJitter       = 8,        -- + 0..N random extra seconds per hop so the fleet desyncs (0 = off)
+    emptyHopGrace   = 0.4,        -- seconds to wait for a pet on join; no pet within this = hop INSTANTLY (no delay)
     useFinder       = true,     -- hop STRAIGHT to a server that already has a wanted pet (WisHUB pet finder)
-    finderPublicMix = 0.3,      -- fraction of hops that skip the finder and do a plain public random hop (0..1)
-    
-    -- PERUBAHAN: Menargetkan SEMUA rarity
-    finderRarities  = { "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic", "Super" },       
+    finderPublicMix = 0.2,      -- fraction of hops that skip the finder and do a plain public random hop (0..1)
+    finderMinRarity = "Rare",
+    finderRandomRarity = true,  -- pick ONE random rarity per fetch so every bot spreads to different servers
+    finderFreshTop  = 50,       -- keep only the N freshest finder entries before picking
+    finderCandidates = 10,      -- how many hop targets to take from the pet finder
+    publicCandidates = 3,       -- how many hop targets to take from the public server list
+    finderRarities  = {},       -- which rarities to chase via the finder. {} = all. e.g. {"Legendary","Mythic","Super"}
     finderToken     = "6d35e00d087f9b53de54381a82a5e5c52e9c93088bf0bde9",  -- pet-finder read token (Bearer)
-    
-    -- PERUBAHAN: Menangkap SEMUA rarity
-    tameRarities    = { "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic", "Super" },      
-    tameNames       = {},      -- Kosongkan agar semua spesies pet ditangkap
-    
-    tameMoveSpeed   = 60,      -- how fast you walk to each pet (16 = normal ... 50 = max)
+    tameRarities    = {},      -- only these rarities, e.g. {"Legendary","Mythic","Super"}.  {} = any
+    tameNames       = {},      -- only these species, e.g. {"Raccoon","Dragonfly"}.          {} = any
+    tameMoveSpeed   = 30,      -- how fast you walk to each pet (16 = normal ... 50 = max)
+    tameSettleTime  = 0.1,       -- seconds to stand still after arriving before the first tame fire (lets the server register our position; 0 = fire ASAP)
     tameReturnAfter = true,    -- (no effect while protectWildTame is false)
     maxPetPrice     = 20000000,       -- skip pets costing more than this (0 = no limit). Number, e.g. 15e6
     protectWildTame = false,   -- hold the shovel + knock back nearby players while taming
@@ -46,14 +42,18 @@ local CONFIG = {
     ------------------------------------------------------------------ MISC
     antiFling   = true,    -- cancel fling/knockback velocity each frame (collision stays ON, unlike noclip)
     autoRejoin  = true,    -- rejoin a fresh server if Roblox disconnects/kicks you (Error 279, garden-load kick, etc.)
-    charLoadTimeout = 15,  -- avatar never appears (no char/analog stick)? rejoin after this many seconds (0 = off)
-    rejoinOnError   = 2,    -- after this many back-to-back tame-loop errors, instant-rejoin to unstick (0 = off)
-    skipLoading = true,    -- auto-skip the loading screen once it is fully loaded
+    charLoadTimeout = 10,  -- avatar never appears (no char/analog stick)? rejoin after this many seconds (0 = off)
+    rejoinOnError   = 0.1,    -- after this many back-to-back tame-loop errors, instant-rejoin to unstick (0 = off)
+    kickBeforeHop   = true, -- kick yourself first, then teleport from the executor thread (VM survives the kick)
+    kickRejoinDelay = 5,   -- seconds between the kick and the teleport fire
+    kickRetryDelay  = 0.1,  -- seconds between teleport retries after the kick (too low = Roblox rate limit)
+    kickRetryCount  = 200,  -- how many teleport retries before giving up and letting autoRejoin take over
+    skipLoading = true,    -- spam a centre click every 2s from the moment the script runs
     fpsBoost    = true,    -- strip the world for max FPS (everything returns on rejoin)
 
     ------------------------------------------------------------------ DISCORD WEBHOOK
     webhook     = true,    -- send a Discord report each server (before every hop) + on errors
-    webhookUrl  = "https://discordapp.com/api/webhooks/1525087279155122267/lB4JdLjO0lDuJPYBem1cNXvBfU3dAiiETpXjfY74ypu8tkrtpij9xB-cN4sy1turW6cA",
+    webhookUrl  = "https://discord.com/api/webhooks/1531310248084766751/YzvolVDSmQ_SRtRdnZeBLR8iSl-nPzgWAI0d08WGqBnVvtfvXsffaKk-KhZ7qMrBGT4m",
 }
 
 
@@ -95,6 +95,7 @@ do
 
     local function reconnect()
         if not st.autoRejoin or reconnecting then return end
+        if _G.__WISHUB_INTENTIONAL_KICK then return end
         reconnecting = true
         notify("Disconnected - rejoining...")
 
@@ -119,7 +120,37 @@ do
         reconnecting = false
     end
 
+    local function errorText()
+        local msg = ""
+        pcall(function()
+            msg = tostring(game:GetService("GuiService"):GetErrorMessage() or "")
+        end)
+        if msg == "" then
+            pcall(function()
+                local rg = game:GetService("CoreGui"):FindFirstChild("RobloxGui")
+                local prompt = rg and rg:FindFirstChild("ErrorPrompt", true)
+                if prompt then
+                    for _, d in ipairs(prompt:GetDescendants()) do
+                        if d:IsA("TextLabel") and #tostring(d.Text) > #msg then
+                            msg = tostring(d.Text)
+                        end
+                    end
+                end
+            end)
+        end
+        return string.lower(msg)
+    end
+
     game:GetService("GuiService").ErrorMessageChanged:Connect(function()
+        local msg = errorText()
+        local dataKick = msg:find("save data", 1, true)
+            or msg:find("uh oh", 1, true)
+            or msg:find("didn't load", 1, true)
+            or msg:find("did not load", 1, true)
+        if dataKick then
+            _G.__WISHUB_INTENTIONAL_KICK = false
+            notify("Save-data kick detected - rejoining now")
+        end
         task.spawn(reconnect)
     end)
 end
@@ -184,104 +215,26 @@ task.spawn(function()
     if _G._HH_loadskip_running then return end
     _G._HH_loadskip_running = true
 
-    local CS = game:GetService("CollectionService")
     local VIM = VirtualInputManager
-    local LP = LocalPlayer
 
-    local gsc
-    local function garden()
-        if gsc then return gsc end
+    local function clickAt(x, y)
         pcall(function()
-            local ps = LP:FindFirstChild("PlayerScripts")
-            local m = ps and ps:FindFirstChild("GardenSyncController", true)
-            if m and m:IsA("ModuleScript") then
-                local mod = require(m)
-                if type(mod) == "table" and type(mod.IsLocalGardenLoaded) == "function" then gsc = mod end
-            end
+            VIM:SendMouseButtonEvent(x, y, 0, true, game, 0)
+            VIM:SendMouseButtonEvent(x, y, 0, false, game, 0)
         end)
-        return gsc
-    end
-
-    local function ready()
-        if not game:IsLoaded() then return false end
-        if not CS:HasTag(LP, "PersistentLoaded") then return false end
-        if not CS:HasTag(LP, "ControllersStarted") then return false end
-        if not CS:HasTag(LP, "DataLoaded") then return false end
-        local mod = garden()
-        if mod then
-            local ok, loaded = pcall(mod.IsLocalGardenLoaded, mod)
-            if ok then return loaded == true end
-        end
-        local total = LP:GetAttribute("GardenLoadingTotal")
-        if total and total > 0 then
-            return (LP:GetAttribute("GardenLoadingProgress") or 0) >= total
-        end
-        return true
-    end
-
-    local inner
-    local function innerFrame()
-        if inner and inner.Parent then return inner end
-        inner = nil
         pcall(function()
-            local menu = workspace:FindFirstChild("LoadingScreenMenu")
-            local f = menu and menu:FindFirstChild("InnerFrame", true)
-            if f then inner = f end
-        end)
-        return inner
-    end
-
-    local function fullyLoaded()
-        local f = innerFrame()
-        if not f then return nil end
-        local bar = f:FindFirstChild("ProgressBar")
-        bar = bar and bar:FindFirstChild("Bar")
-        if bar and bar:IsA("GuiObject") and bar.Size.X.Scale >= 0.985 then return true end
-        local counter = f:FindFirstChild("CounterTxt")
-        if counter and counter:IsA("TextLabel") then
-            local t = counter.Text or ""
-            if t:find("Fully Loaded") or t:find("100%") then return true end
-        end
-        return false
-    end
-
-    local function sendSkip()
-        pcall(function()
-            for _, key in ipairs({ Enum.KeyCode.Space, Enum.KeyCode.Return, Enum.KeyCode.E }) do
-                VIM:SendKeyEvent(true, key, false, game)
-                VIM:SendKeyEvent(false, key, false, game)
-            end
-            local cam = workspace.CurrentCamera
-            local vp = cam and cam.ViewportSize
-            local cx, cy = 200, 200
-            if vp and vp.X > 4 then cx, cy = math.floor(vp.X / 2), math.floor(vp.Y / 2) end
-            VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
-            VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+            VIM:SendTouchEvent(1, 0, x, y)
+            VIM:SendTouchEvent(1, 2, x, y)
         end)
     end
 
-    local t0 = os.clock()
-    while not LP:GetAttribute("LoadingScreenActive") do
-        if LP:GetAttribute("LoadingScreenDone") or os.clock() - t0 > 10 then return end
-        task.wait(0.2)
-    end
-
-    local tActive = os.clock()
-    local function waitDone(sec)
-        local w = os.clock()
-        while not LP:GetAttribute("LoadingScreenDone") and os.clock() - w < sec do task.wait(0.1) end
-    end
-
-    while not LP:GetAttribute("LoadingScreenDone") and os.clock() - tActive < 120 do
-        if LP:GetAttribute("LoadingScreenActive") then
-            local fl = fullyLoaded()
-            if fl == true then
-                sendSkip(); waitDone(1.5)
-            elseif fl == nil and ready() and os.clock() - tActive >= 8 then
-                sendSkip(); waitDone(1.5)
-            end
-        end
-        task.wait(0.3)
+    while true do
+        local cam = workspace.CurrentCamera
+        local vp = cam and cam.ViewportSize
+        local w, h = 400, 400
+        if vp and vp.X > 4 then w, h = vp.X, vp.Y end
+        clickAt(math.floor(w / 2), math.floor(h / 2))
+        task.wait(2)
     end
 end)
 
@@ -324,15 +277,7 @@ end
 local function reportDone()
     if not st.webhook then return end
     local pets = (#sessionPets > 0) and table.concat(sessionPets, ", ") or "none"
-    
-    -- Cek apakah di sesi ini mendapat Raccoon, Unicorn, atau Butterfly
-    local shouldTag = false
-    local checkPets = string.lower(pets)
-    if string.find(checkPets, "raccoon") or string.find(checkPets, "unicorn") or string.find(checkPets, "butterfly") then
-        shouldTag = true
-    end
-
-    local payload = {
+    sendWebhook({
         embeds = { {
             title = "GaG2 Auto Tame - Server done",
             color = 3066993,
@@ -344,14 +289,7 @@ local function reportDone()
             },
             footer = { text = "WisHUB GaG2 | JobId " .. tostring(game.JobId) },
         } },
-    }
-
-    -- Tambahkan tag jika pet target ditemukan
-    if shouldTag then
-        payload.content = "<@&1524802125996232906>"
-    end
-
-    sendWebhook(payload)
+    })
 end
 
 local lastErrAt, lastErrMsg = 0, nil
@@ -438,6 +376,7 @@ local function firedPromptsRemaining()
 end
 
 local cooldown = {}
+local tameFails = {}
 
 local function matchesWhitelist(rarity, name)
     local rOK = (#st.tameRarities == 0) or (table.find(st.tameRarities, rarity) ~= nil)
@@ -612,15 +551,48 @@ local function pickTarget()
     return best, bestRef
 end
 
+local function prepPrompt(prompt)
+    pcall(function()
+        prompt.RequiresLineOfSight = false
+        prompt.HoldDuration = 0
+        if prompt.MaxActivationDistance < 30 then prompt.MaxActivationDistance = 30 end
+        prompt.Enabled = true
+    end)
+end
+
+local TAME_OFFSETS = {
+    Vector3.new(0, 0, 0),
+    Vector3.new(3, 0, 0),
+    Vector3.new(-3, 0, 0),
+    Vector3.new(0, 0, 3),
+    Vector3.new(0, 0, -3),
+    Vector3.new(0, 3, 0),
+}
+
+local function fireTame(prompt, ref, attempt)
+    local mode = attempt % 3
+    if mode == 1 and type(fireproximityprompt) == "function" then
+        pcall(function() fireproximityprompt(prompt) end)
+    elseif mode == 2 and type(fireproximityprompt) == "function" then
+        pcall(function() fireproximityprompt(prompt, 1) end)
+    else
+        pcall(function() Networking.Pets.WildPetTame:Fire(ref) end)
+    end
+end
+
 local function fastTame(visual, ref)
     local rp = visual:FindFirstChild("RootPart")
     local prompt = rp and rp:FindFirstChild("BuyPrompt")
     local root = hrp()
     if not (rp and prompt and root) then return false end
+    prepPrompt(prompt)
+    local timeout = math.max(4, tonumber(st.tameTimeout) or 10)
     local start = os.clock()
     local lastT = os.clock()
     local settledAt = nil
     local firedOnce = false
+    local firstFireAt = nil
+    local attempt = 0
     local lastFire = 0
     local ok = false
     while true do
@@ -643,11 +615,13 @@ local function fastTame(visual, ref)
         local cap = tonumber(st.maxPetPrice) or 0
         if cap > 0 and (tonumber(ref:GetAttribute("Price")) or 0) > cap then break end
         if not firedOnce and os.clock() - start > 8 then break end
-        if firedOnce and os.clock() - start > 20 then break end
+        if firstFireAt and os.clock() - firstFireAt > timeout then break end
         local now = os.clock()
         local dt = math.min(now - lastT, 0.1)
         lastT = now
-        local goal = (refCFrame(ref) or rp.CFrame).Position
+        local base = (refCFrame(ref) or rp.CFrame).Position
+        local off = TAME_OFFSETS[(math.floor(attempt / 3) % #TAME_OFFSETS) + 1]
+        local goal = base + off
         local cur = root.Position
         local to = goal - cur
         local dist = to.Magnitude
@@ -656,22 +630,22 @@ local function fastTame(visual, ref)
             settledAt = nil
             local step = math.min(speed * dt, dist - 5)
             local nextPos = cur + to.Unit * step
-            root.CFrame = CFrame.lookAt(nextPos, Vector3.new(goal.X, nextPos.Y, goal.Z))
+            root.CFrame = CFrame.lookAt(nextPos, Vector3.new(base.X, nextPos.Y, base.Z))
             pcall(function() root.AssemblyLinearVelocity = Vector3.zero end)
         else
-            root.CFrame = CFrame.lookAt(cur, Vector3.new(goal.X, cur.Y, goal.Z))
+            root.CFrame = CFrame.lookAt(cur, Vector3.new(base.X, cur.Y, base.Z))
             pcall(function() root.AssemblyLinearVelocity = Vector3.zero end)
             settledAt = settledAt or now
-            if now - settledAt > 0.6 and now - lastFire > 0.4 then
+            local settle = math.max(0, tonumber(st.tameSettleTime) or 0.6)
+            local gap = firedOnce and 1.2 or 0.4
+            if now - settledAt >= settle and now - lastFire > gap then
                 lastFire = now
+                attempt = attempt + 1
                 firedOnce = true
+                firstFireAt = firstFireAt or now
                 markTameFired(ref)
                 trackFiredPrompt(prompt)
-                if type(fireproximityprompt) == "function" then
-                    pcall(function() fireproximityprompt(prompt) end)
-                else
-                    pcall(function() Networking.Pets.WildPetTame:Fire(ref) end)
-                end
+                fireTame(prompt, ref, attempt)
             end
         end
         RunService.Heartbeat:Wait()
@@ -691,8 +665,20 @@ local function doTameStep(target, ref)
             cooldown[target] = os.clock() + 12
         end
     else
-        fastTame(target, ref)
-        cooldown[target] = os.clock() + 2
+        if fastTame(target, ref) then
+            tameFails[target] = nil
+            cooldown[target] = os.clock() + 2
+        else
+            local n = (tameFails[target] or 0) + 1
+            tameFails[target] = n
+            local maxFails = math.max(1, tonumber(st.tameMaxFails) or 2)
+            if n >= maxFails then
+                cooldown[target] = os.clock() + 300
+                notify(("Pet stuck x%d, blacklisted for this server"):format(n))
+            else
+                cooldown[target] = os.clock() + 5
+            end
+        end
     end
 end
 
@@ -857,6 +843,65 @@ local function dismissTeleportError()
     end)
 end
 
+local RECENT_FILE = "wishub_gag2_recent.json"
+local RECENT_MAX = 25
+local RECENT_TTL = 1800
+
+local hasFS = type(writefile) == "function" and type(readfile) == "function" and type(isfile) == "function"
+local recentCache = nil
+
+local function loadRecent()
+    if recentCache then return recentCache end
+    recentCache = {}
+    if hasFS then
+        pcall(function()
+            if isfile(RECENT_FILE) then
+                local d = HttpService:JSONDecode(readfile(RECENT_FILE))
+                if type(d) == "table" then recentCache = d end
+            end
+        end)
+    elseif type(getgenv) == "function" then
+        local g = getgenv()
+        g.__WISHUB_RECENT = g.__WISHUB_RECENT or {}
+        recentCache = g.__WISHUB_RECENT
+    end
+    local now = os.time()
+    for job, ts in pairs(recentCache) do
+        if type(ts) ~= "number" or now - ts > RECENT_TTL then recentCache[job] = nil end
+    end
+    return recentCache
+end
+
+local function saveRecent()
+    local t = loadRecent()
+    local list = {}
+    for job, ts in pairs(t) do list[#list + 1] = { job = job, ts = ts } end
+    if #list > RECENT_MAX then
+        table.sort(list, function(a, b) return a.ts > b.ts end)
+        for i = RECENT_MAX + 1, #list do t[list[i].job] = nil end
+    end
+    if hasFS then
+        pcall(function() writefile(RECENT_FILE, HttpService:JSONEncode(t)) end)
+    end
+end
+
+local function normJob(job)
+    return string.lower(tostring(job or ""))
+end
+
+local function markVisited(job)
+    job = normJob(job)
+    if job == "" then return end
+    loadRecent()[job] = os.time()
+    saveRecent()
+end
+
+local function wasRecent(job)
+    return loadRecent()[normJob(job)] ~= nil
+end
+
+markVisited(game.JobId)
+
 local PetRarityByName = {
     Bunny = "Common", Frog = "Common",
     Owl = "Uncommon",
@@ -870,28 +915,60 @@ local FINDER_BASE = "https://gag2petfinder.wishub.cloud/api/wq7x2k9p"
 local FINDER_MIN_REMAINING = 20
 local finderFailedJobs = {}
 
+local RARITY_RANK = {
+    Common = 1, Uncommon = 2, Rare = 3, Epic = 4,
+    Legendary = 5, Mythic = 6, Super = 7,
+}
+
+local function finderMinRank()
+    local want = tostring(st.finderMinRarity or "")
+    return RARITY_RANK[want] or 0
+end
+
 local function finderRequestFn()
     return (WIS_Request and WIS_Request.request) or (syn and syn.request)
         or (fluxus and fluxus.request) or (http and http.request) or http_request or request
 end
 
 local function finderPetNames()
+    local pool = {}
     local want = st.finderRarities
-    local restrict = type(want) == "table" and #want > 0
+    if type(want) == "table" and #want > 0 then
+        for _, r in ipairs(want) do pool[#pool + 1] = r end
+    else
+        local seen = {}
+        for _, rarity in pairs(PetRarityByName) do
+            if not seen[rarity] then
+                seen[rarity] = true
+                pool[#pool + 1] = rarity
+            end
+        end
+    end
+
+    if st.finderRandomRarity and #pool > 0 then
+        local pick = pool[math.random(1, #pool)]
+        local names = {}
+        for name, rarity in pairs(PetRarityByName) do
+            if rarity == pick then names[#names + 1] = name end
+        end
+        if #names > 0 then return names, pick end
+    end
+
+    local restrict = #pool > 0 and type(want) == "table" and #want > 0
     local names = {}
     for name, rarity in pairs(PetRarityByName) do
         if not restrict or table.find(want, rarity) then
             names[#names + 1] = name
         end
     end
-    return names
+    return names, nil
 end
 
 local function finderFetch()
     if not st.useFinder then return nil end
     local req = finderRequestFn()
     if type(req) ~= "function" then return nil end
-    local names = finderPetNames()
+    local names, pickedRarity = finderPetNames()
     if #names == 0 then return nil end
     local url = FINDER_BASE .. "?pet_name=" .. table.concat(names, ",")
     local resp
@@ -902,6 +979,7 @@ local function finderFetch()
             Headers = {
                 ["Authorization"] = "Bearer " .. tostring(st.finderToken or ""),
                 ["Cache-Control"] = "no-store",
+                ["Pragma"] = "no-cache",
             },
         })
     end)
@@ -910,15 +988,18 @@ local function finderFetch()
     if type(body) ~= "string" then return nil end
     local decoded
     if not pcall(function() decoded = HttpService:JSONDecode(body) end) then return nil end
-    return type(decoded) == "table" and decoded or nil
+    if type(decoded) ~= "table" then return nil end
+    return decoded, pickedRarity
 end
 
-local function finderPickJobId()
-    local pets = finderFetch()
-    if not pets then return nil end
-    local cur = tostring(game.JobId)
+local function finderPickJobs(count)
+    count = math.max(1, math.floor(tonumber(count) or 1))
+    local pets, pickedRarity = finderFetch()
+    if not pets then return {} end
+    local cur = normJob(game.JobId)
     local now = os.time()
     local clock = os.clock()
+
     local best = {}
     for _, p in ipairs(pets) do
         local job = tostring(p.job_id or "")
@@ -926,32 +1007,54 @@ local function finderPickJobId()
         local players = tonumber(p.players) or 0
         local maxp = tonumber(p.max_players) or 8
         local failed = finderFailedJobs[job]
-        if job ~= "" and job ~= cur and remain >= FINDER_MIN_REMAINING and players < maxp
+        if job ~= "" and normJob(job) ~= cur and remain >= FINDER_MIN_REMAINING and players < maxp
             and not (failed and failed > clock) then
             local prev = best[job]
-            if not prev or remain > prev.remain then best[job] = { players = players, remain = remain } end
+            if not prev or remain > prev.remain then
+                best[job] = { players = players, remain = remain }
+            end
         end
     end
-    local list, total = {}, 0
-    for job, info in pairs(best) do
-        local w = math.max(1, 8 - (info.players or 0))
-        list[#list + 1] = { job = job, w = w }
-        total = total + w
+
+    local function collect(allowRecent)
+        local arr = {}
+        for job, info in pairs(best) do
+            if allowRecent or not wasRecent(job) then
+                arr[#arr + 1] = { job = job, remain = info.remain, players = info.players }
+            end
+        end
+        return arr
     end
-    if #list == 0 then return nil end
-    local r = math.random() * total
-    local acc = 0
-    for _, c in ipairs(list) do
-        acc = acc + c.w
-        if r <= acc then return c.job end
+
+    local arr = collect(false)
+    if #arr == 0 then arr = collect(true) end
+    if #arr == 0 then return {} end
+
+    table.sort(arr, function(a, b) return a.remain > b.remain end)
+
+    local topN = math.max(1, math.floor(tonumber(st.finderFreshTop) or 50))
+    if #arr > topN then
+        for i = #arr, topN + 1, -1 do arr[i] = nil end
     end
-    return list[#list].job
+
+    for i = #arr, 2, -1 do
+        local j = math.random(1, i)
+        arr[i], arr[j] = arr[j], arr[i]
+    end
+
+    local out = {}
+    for i = 1, math.min(count, #arr) do out[#out + 1] = arr[i].job end
+    if pickedRarity then
+        notify(("Finder: %s -> %d fresh servers"):format(pickedRarity, #out))
+    end
+    return out
 end
 
-local function fetchHopServers()
+local function fetchHopServers(allowRecent)
     local pid = game.PlaceId
     local list = {}
     local cursor = ""
+    local cur = normJob(game.JobId)
     for _ = 1, 3 do
         local url = "https://games.roblox.com/v1/games/" .. pid .. "/servers/Public?sortOrder=Asc&limit=100"
         if cursor ~= "" then url = url .. "&cursor=" .. cursor end
@@ -960,8 +1063,9 @@ local function fetchHopServers()
         local ok2, data = pcall(function() return HttpService:JSONDecode(body) end)
         if not (ok2 and type(data) == "table" and type(data.data) == "table") then break end
         for _, s in ipairs(data.data) do
-            if s.id ~= game.JobId and type(s.playing) == "number" and type(s.maxPlayers) == "number"
-                and s.playing < s.maxPlayers then
+            if normJob(s.id) ~= cur and type(s.playing) == "number" and type(s.maxPlayers) == "number"
+                and s.playing < s.maxPlayers
+                and (allowRecent or not wasRecent(s.id)) then
                 list[#list + 1] = { id = s.id, playing = s.playing }
             end
         end
@@ -970,6 +1074,87 @@ local function fetchHopServers()
     end
     table.sort(list, function(a, b) return a.playing < b.playing end)
     return list
+end
+
+local function doTeleport(pid, job)
+    local ok = pcall(function()
+        TeleportService:TeleportToPlaceInstance(pid, job, LocalPlayer)
+    end)
+    if not ok then
+        pcall(function() TeleportService:TeleportToPlaceInstance(pid, job) end)
+    end
+end
+
+local function buildJobList()
+    local jobs, seen = {}, {}
+    local function add(j)
+        j = tostring(j or "")
+        if j ~= "" and not seen[normJob(j)] then
+            seen[normJob(j)] = true
+            jobs[#jobs + 1] = j
+        end
+    end
+
+    local finderJobs = {}
+    local usePublic = math.random() < (tonumber(st.finderPublicMix) or 0)
+    if st.useFinder and not usePublic then
+        local want = math.max(0, math.floor(tonumber(st.finderCandidates) or 10))
+        if want > 0 then finderJobs = finderPickJobs(want) end
+    end
+
+    local publicJobs = {}
+    local pubWant = math.max(0, math.floor(tonumber(st.publicCandidates) or 5))
+    if pubWant > 0 then
+        local servers = fetchHopServers(false)
+        if #servers == 0 then servers = fetchHopServers(true) end
+        for i = 1, math.min(#servers, pubWant) do
+            publicJobs[#publicJobs + 1] = servers[i].id
+        end
+    end
+
+    local fi, pi = 1, 1
+    while fi <= #finderJobs or pi <= #publicJobs do
+        for _ = 1, 2 do
+            if fi <= #finderJobs then
+                add(finderJobs[fi])
+                fi = fi + 1
+            end
+        end
+        if pi <= #publicJobs then
+            add(publicJobs[pi])
+            pi = pi + 1
+        end
+    end
+
+    return jobs
+end
+
+local function hopTo(pid, jobs)
+    if #jobs == 0 then return end
+    for _, j in ipairs(jobs) do markVisited(j) end
+
+    if not st.kickBeforeHop then
+        doTeleport(pid, jobs[1])
+        return
+    end
+
+    local delaySec = math.max(1, tonumber(st.kickRejoinDelay) or 10)
+    notify(("Kicking now, rejoin in %ds (%d candidate servers)"):format(delaySec, #jobs))
+    _G.__WISHUB_INTENTIONAL_KICK = true
+    task.spawn(function()
+        task.wait(delaySec)
+        local gap = math.max(0.05, tonumber(st.kickRetryDelay) or 1.2)
+        local tries = math.max(1, math.floor(tonumber(st.kickRetryCount) or 20))
+        for i = 1, tries do
+            local job = jobs[((i - 1) % #jobs) + 1]
+            dismissTeleportError()
+            doTeleport(pid, job)
+            task.wait(gap)
+        end
+        _G.__WISHUB_INTENTIONAL_KICK = false
+    end)
+    task.wait(0.2)
+    pcall(function() LocalPlayer:Kick("WisHUB server hop") end)
 end
 
 local function serverHop()
@@ -983,36 +1168,29 @@ local function serverHop()
         teleportFailed = false
         teleportFailResult = nil
 
-        local usePublic = math.random() < (tonumber(st.finderPublicMix) or 0)
-        local usedJob = (st.useFinder and not usePublic) and finderPickJobId() or nil
-        if usedJob then
-            pcall(function() TeleportService:TeleportToPlaceInstance(pid, usedJob, LocalPlayer) end)
-        else
-            local servers = fetchHopServers()
-            if #servers > 0 then
-                local choice = servers[math.random(1, #servers)]
-                usedJob = choice.id
-                pcall(function() TeleportService:TeleportToPlaceInstance(pid, choice.id, LocalPlayer) end)
-            else
-                pcall(function() TeleportService:Teleport(pid, LocalPlayer) end)
-            end
+        local jobs = buildJobList()
+        if #jobs == 0 then
+            notify(("No fresh server found, retrying (#%d)"):format(attempt))
+            task.wait(2)
+            continue
         end
+        hopTo(pid, jobs)
         local t0 = os.clock()
-        while not teleportFailed and os.clock() - t0 < 60 do
+        while not teleportFailed and os.clock() - t0 < 25 do
             if not (st.autoTame and st.autoHop) then return false end
             task.wait(0.5)
         end
         if teleportFailed then
             local flooded = teleportFailResult == Enum.TeleportResult.Flooded
-            if usedJob then
-                local unauth = teleportFailResult == Enum.TeleportResult.Unauthorized
-                finderFailedJobs[usedJob] = os.clock() + (unauth and 36000 or 45)
+            local unauth = teleportFailResult == Enum.TeleportResult.Unauthorized
+            for _, j in ipairs(jobs) do
+                finderFailedJobs[j] = os.clock() + (unauth and 36000 or 45)
             end
             notify(flooded and ("Rate-limited, waiting (#%d)"):format(attempt)
                 or ("Server full/failed, retrying (#%d)"):format(attempt))
             if flooded then task.wait(12) else task.wait() end
         else
-            notify(("Teleport stuck 1m, retrying (#%d)"):format(attempt))
+            notify(("Teleport stuck, retrying (#%d)"):format(attempt))
             task.wait(1)
         end
     end
@@ -1064,16 +1242,21 @@ task.spawn(function()
                         for p in pairs(firedPrompts) do firedPrompts[p] = nil end
 
                         if sessionTamed > 0 then
-                            reportDone()
-                            -- PERBAIKAN: Mengizinkan hop delay menjadi 0 (sebelumnya terkunci minimal 5 detik)
-                            local hd = math.max(0, tonumber(st.hopDelay) or 0)
+                            local hd = math.clamp(tonumber(st.hopDelay) or 5, 5, 30)
                             local jitter = math.max(0, tonumber(st.hopJitter) or 0)
                             if jitter > 0 then hd = hd + math.random() * jitter end
-                            notify(("Tamed %d, hopping in %.0fs"):format(sessionTamed, hd))
+                            notify(("Tamed %d, watching for respawns for %.0fs"):format(sessionTamed, hd))
+
                             local hstart = os.clock()
                             while os.clock() - hstart < hd and st.autoTame and st.autoHop do
-                                task.wait(0.2)
+                                local t2, r2 = pickTarget()
+                                if t2 then
+                                    doTameStep(t2, r2)
+                                else
+                                    task.wait(0.3)
+                                end
                             end
+                            reportDone()
                         else
                             notify("No pet here -- hopping now")
                         end
@@ -1132,15 +1315,28 @@ local function fpsKeepSet()
     return keep
 end
 
+local function isPetRelated(inst)
+    if not inst then return false end
+    if tostring(inst.Name):find("WildPet", 1, true) then return true end
+    local ok, found = pcall(function()
+        return inst:FindFirstChild("WildPetSpawns", true)
+            or inst:FindFirstChild("WildPetRef", true)
+    end)
+    if ok and found then return true end
+    return false
+end
+
 local function fpsClearWorld()
     local keep = fpsKeepSet()
     for _, c in ipairs(workspace:GetChildren()) do
-        if keep[c] or c:IsA("Camera") then
+        if keep[c] or c:IsA("Camera") or isPetRelated(c) then
         elseif c:IsA("Terrain") then
             pcall(function() c:Clear() end)
         elseif c.Name == "Map" or c.Name == "Baseplate" then
             for _, mc in ipairs(c:GetChildren()) do
-                if not keep[mc] then pcall(function() mc:Destroy() end) end
+                if not keep[mc] and not isPetRelated(mc) then
+                    pcall(function() mc:Destroy() end)
+                end
             end
         elseif c:IsA("BasePart") or c:IsA("Model") or c:IsA("Folder") or c:IsA("UnionOperation") or c:IsA("MeshPart") then
             pcall(function() c:Destroy() end)
@@ -1187,24 +1383,11 @@ local function fpsSafeToStart()
     return hrp() ~= nil
 end
 
-local function fpsClearGardens()
+local function fpsClearFruitTrees()
     local gardens = workspace:FindFirstChild("Gardens")
     if not gardens then return end
-    local pid = LocalPlayer:GetAttribute("PlotId")
-    local myPlot = pid and ("Plot" .. tostring(pid)) or nil
     for _, plot in ipairs(gardens:GetChildren()) do
-        if string.match(plot.Name, "^Plot%d+$") then
-            if myPlot and plot.Name ~= myPlot then
-                pcall(function() plot:Destroy() end)
-            else
-                local plants = plot:FindFirstChild("Plants")
-                if plants then
-                    for _, plant in ipairs(plants:GetChildren()) do
-                        pcall(function() plant:Destroy() end)
-                    end
-                end
-            end
-        end
+        pcall(function() plot:Destroy() end)
     end
 end
 
@@ -1225,6 +1408,19 @@ local function fpsProtected(desc)
     if fpsPlatform and (desc == fpsPlatform or desc:IsDescendantOf(fpsPlatform)) then return true end
     local char = LocalPlayer.Character
     if char and desc:IsDescendantOf(char) then return true end
+
+    if tostring(desc.Name):find("WildPet", 1, true) then return true end
+    local okA, anc = pcall(function()
+        return desc:FindFirstAncestor("WildPetSpawns") or desc:FindFirstAncestor("WildPetRef")
+    end)
+    if okA and anc then return true end
+    local cur = desc.Parent
+    for _ = 1, 6 do
+        if not cur or cur == workspace then break end
+        if tostring(cur.Name):find("WildPet", 1, true) then return true end
+        cur = cur.Parent
+    end
+
     local m = workspace:FindFirstChild("Map")
     if m then
         local sp = m:FindFirstChild("WildPetSpawns")
@@ -1345,8 +1541,8 @@ local function startFpsBoost()
     local id = fpsLoopId
     task.spawn(function()
         while st.fpsBoost and fpsLoopId == id and not fpsSafeToStart() do
-            pcall(fpsClearGardens)
-            task.wait(0.5)
+            pcall(fpsClearFruitTrees)
+            task.wait(1)
         end
         if not (st.fpsBoost and fpsLoopId == id) then return end
         fpsGameplayActive = true
@@ -1355,7 +1551,8 @@ local function startFpsBoost()
         pcall(optimizeWorld)
         while st.fpsBoost and fpsLoopId == id do
             task.wait(2)
-            if st.fpsBoost and fpsSafeToStart() then pcall(fpsClearWorld) end
+            pcall(fpsClearFruitTrees)
+            pcall(fpsClearWorld)
         end
         fpsGameplayActive = false
     end)
