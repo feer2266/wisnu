@@ -6,11 +6,11 @@ local CONFIG = {
     ------------------------------------------------------------------ AUTO TAME
     autoTame        = true,    -- true = continuously tame matching wild pets
     autoHop         = true,   -- true = clear this server, then hop to a new one for more
-    hopDelay        = 5,       -- seconds to keep watching for respawns after a tame before hopping (5-30)
-    hopJitter       = 8,        -- + 0..N random extra seconds per hop so the fleet desyncs (0 = off)
-    emptyHopGrace   = 0.4,        -- seconds to wait for a pet on join; no pet within this = hop INSTANTLY (no delay)
+    hopDelay        = 5,        -- seconds to keep watching for respawns after a tame before hopping (5-30)
+    hopJitter       = 8,         -- + 0..N random extra seconds per hop so the fleet desyncs (0 = off)
+    emptyHopGrace   = 0.4,       -- seconds to wait for a pet on join; no pet within this = hop INSTANTLY (no delay)
     useFinder       = true,     -- hop STRAIGHT to a server that already has a wanted pet (WisHUB pet finder)
-    finderPublicMix = 0.2,      -- fraction of hops that skip the finder and do a plain public random hop (0..1)
+    finderPublicMix = 0.2,       -- fraction of hops that skip the finder and do a plain public random hop (0..1)
     finderMinRarity = "Rare",
     finderRandomRarity = true,  -- pick ONE random rarity per fetch so every bot spreads to different servers
     finderFreshTop  = 50,       -- keep only the N freshest finder entries before picking
@@ -18,10 +18,10 @@ local CONFIG = {
     publicCandidates = 3,       -- how many hop targets to take from the public server list
     finderRarities  = {},       -- which rarities to chase via the finder. {} = all. e.g. {"Legendary","Mythic","Super"}
     finderToken     = "6d35e00d087f9b53de54381a82a5e5c52e9c93088bf0bde9",  -- pet-finder read token (Bearer)
-    tameRarities    = {},      -- only these rarities, e.g. {"Legendary","Mythic","Super"}.  {} = any
-    tameNames       = {},      -- only these species, e.g. {"Raccoon","Dragonfly"}.          {} = any
-    tameMoveSpeed   = 30,      -- how fast you walk to each pet (16 = normal ... 50 = max)
-    tameSettleTime  = 0.1,       -- seconds to stand still after arriving before the first tame fire (lets the server register our position; 0 = fire ASAP)
+    tameRarities    = {},       -- only these rarities, e.g. {"Legendary","Mythic","Super"}.  {} = any
+    tameNames       = {},       -- only these species, e.g. {"Raccoon","Dragonfly"}.         {} = any
+    tameMoveSpeed   = 30,       -- how fast you walk to each pet (16 = normal ... 50 = max)
+    tameSettleTime  = 0.1,      -- seconds to stand still after arriving before the first tame fire (lets the server register our position; 0 = fire ASAP)
     tameReturnAfter = true,    -- (no effect while protectWildTame is false)
     maxPetPrice     = 20000000,       -- skip pets costing more than this (0 = no limit). Number, e.g. 15e6
     protectWildTame = false,   -- hold the shovel + knock back nearby players while taming
@@ -45,7 +45,7 @@ local CONFIG = {
     charLoadTimeout = 10,  -- avatar never appears (no char/analog stick)? rejoin after this many seconds (0 = off)
     rejoinOnError   = 0.1,    -- after this many back-to-back tame-loop errors, instant-rejoin to unstick (0 = off)
     kickBeforeHop   = true, -- kick yourself first, then teleport from the executor thread (VM survives the kick)
-    kickRejoinDelay = 5,   -- seconds between the kick and the teleport fire
+    kickRejoinDelay = 5,    -- seconds between the kick and the teleport fire
     kickRetryDelay  = 0.1,  -- seconds between teleport retries after the kick (too low = Roblox rate limit)
     kickRetryCount  = 200,  -- how many teleport retries before giving up and letting autoRejoin take over
     skipLoading = true,    -- spam a centre click every 2s from the moment the script runs
@@ -277,7 +277,29 @@ end
 local function reportDone()
     if not st.webhook then return end
     local pets = (#sessionPets > 0) and table.concat(sessionPets, ", ") or "none"
+    
+    -- Cek apakah ada pet rarity Super atau Mythic yang berhasil ditangkap di sesi ini
+    local hasHighRarity = false
+    for _, meta in pairs(petMeta) do
+        local r = tostring(meta.rarity or "")
+        if r == "Super" or r == "Mythic" then
+            hasHighRarity = true
+            break
+        end
+    end
+    -- Cek juga dari nama/string pets
+    local petsLower = string.lower(pets)
+    if petsLower:find("super") or petsLower:find("mythic") or petsLower:find("raccoon") or petsLower:find("unicorn") or petsLower:find("dragon") then
+        hasHighRarity = true
+    end
+
+    local contentMsg = nil
+    if hasHighRarity then
+        contentMsg = "<@&1524802125996232906>"
+    end
+
     sendWebhook({
+        content = contentMsg,
         embeds = { {
             title = "GaG2 Auto Tame - Server done",
             color = 3066993,
@@ -325,7 +347,6 @@ Networking.Pets.WildPetTameResult.OnClientEvent:Connect(function(petPart, who)
             local label = (meta and meta.name) and tostring(meta.name) or "Pet"
             if meta and meta.rarity then label = label .. " (" .. tostring(meta.rarity) .. ")" end
             sessionPets[#sessionPets + 1] = label
-            petMeta[k] = nil
         end
     end
 end)
@@ -1263,6 +1284,7 @@ task.spawn(function()
 
                         sessionTamed = 0
                         table.clear(sessionPets)
+                        table.clear(petMeta)
                         if st.autoTame and st.autoHop then
                             serverHop()
                             task.wait(5)
